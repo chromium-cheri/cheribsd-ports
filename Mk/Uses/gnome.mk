@@ -333,6 +333,8 @@ PLIST_SUB+=	GIR="@comment "
 .    else
 PLIST_SUB+=	GIR=""
 .    endif
+.  else
+PLIST_SUB+=	GIR=""
 .  endif
 
 # Then use already expanded USE_GNOME_IMPL to expand USE_GNOME.
