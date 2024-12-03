@@ -1844,7 +1844,7 @@ share/aclocal/progtest.m4
 %%DATADIR%%-%%VERSION%%/its/gtkbuilder.its
 %%DATADIR%%-%%VERSION%%/its/metainfo.its
 %%DATADIR%%-%%VERSION%%/its/metainfo.loc
-%%DATADIR%%/archive.dir.tar.xz
+%%DATADIR%%/archive.dir%%ARCHIVE_SUFX%%
 %%DATADIR%%/config.rpath
 %%DATADIR%%/javaversion.class
 %%DATADIR%%/msgunfmt.tcl
