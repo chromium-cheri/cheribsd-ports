@@ -14,7 +14,7 @@ LICENSE_FILE=	${WRKSRC}/COPYING
 LIB_DEPENDS=	libfreetype.so:print/freetype2 \
 		libgraphite2.so:graphics/graphite2
 
-USES=		compiler:c++11-lib cpe meson pkgconfig python:build \
+USES=		compiler:c++11-lib cpe gnome meson pkgconfig python:build \
 		shebangfix tar:xz
 
 USE_GNOME=	glib20 introspection:build
