@@ -653,6 +653,19 @@ index a2d40d8f9..787592847 100644
  		"Location of the repository configuration files"
  	},
  	{
+diff --git libpkg/pkg_delete.c libpkg/pkg_delete.c
+index 821e02a2d..43f660ffd 100644
+--- libpkg/pkg_delete.c
++++ libpkg/pkg_delete.c
+@@ -386,7 +386,7 @@ pkg_delete_dir(struct pkg *pkg, struct pkg_dir *dir)
+ 	prefix_rel = pkg->prefix;
+ 	prefix_rel++;
+ 	len = strlen(prefix_rel);
+-	while (prefix_rel[len - 1] == '/')
++	while (len > 0 && prefix_rel[len - 1] == '/')
+ 		len--;
+ 
+ 	if ((strncmp(prefix_rel, path, len) == 0) && path[len] == '/') {
 diff --git libpkg/pkg_elf.c libpkg/pkg_elf.c
 index 05512c369..5a69eb620 100644
 --- libpkg/pkg_elf.c
