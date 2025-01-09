@@ -1269,10 +1269,10 @@ index cea956db40..d9a0f61d43 100644
  #define RETPUSHYES	RETURNX(PUSHs(&PL_sv_yes))
  #define RETPUSHNO	RETURNX(PUSHs(&PL_sv_no))
 diff --git pp_hot.c pp_hot.c
-index 3348afedf1..c49fd6312f 100644
+index 3348afedf1..66aaf4468b 100644
 --- pp_hot.c
 +++ pp_hot.c
-@@ -1419,7 +1419,7 @@ PP(pp_add)
+@@ -1419,19 +1419,19 @@ PP(pp_add)
          U32 flags = (svl->sv_flags & svr->sv_flags);
          if (flags & SVf_IOK) {
              /* both args are simple IVs */
@@ -1281,7 +1281,13 @@ index 3348afedf1..c49fd6312f 100644
              il = SvIVX(svl);
              ir = SvIVX(svr);
            do_iv:
-@@ -1431,7 +1431,7 @@ PP(pp_add)
+-            topl = ((UV)il) >> (UVSIZE * 8 - 2);
+-            topr = ((UV)ir) >> (UVSIZE * 8 - 2);
++            topl = ((UV)il) >> (UVINTSIZE * 8 - 2);
++            topr = ((UV)ir) >> (UVINTSIZE * 8 - 2);
+ 
+             /* if both are in a range that can't under/overflow, do a
+              * simple integer add: if the top of both numbers
               * are 00  or 11, then it's safe */
              if (!( ((topl+1) | (topr+1)) & 2)) {
                  SP--;
