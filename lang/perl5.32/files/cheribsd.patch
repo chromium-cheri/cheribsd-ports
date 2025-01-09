@@ -1304,10 +1304,10 @@ index 3797ec434e..6233733590 100644
  	    i = SvIV_nomg(left);
  	    j = SvIV_nomg(right);
 diff --git pp_hot.c pp_hot.c
-index 95f6d64411..51587a5cc7 100644
+index 95f6d64411..fdc4624130 100644
 --- pp_hot.c
 +++ pp_hot.c
-@@ -1413,7 +1413,7 @@ PP(pp_add)
+@@ -1413,19 +1413,19 @@ PP(pp_add)
          U32 flags = (svl->sv_flags & svr->sv_flags);
          if (flags & SVf_IOK) {
              /* both args are simple IVs */
@@ -1316,7 +1316,13 @@ index 95f6d64411..51587a5cc7 100644
              il = SvIVX(svl);
              ir = SvIVX(svr);
            do_iv:
-@@ -1425,7 +1425,7 @@ PP(pp_add)
+-            topl = ((UV)il) >> (UVSIZE * 8 - 2);
+-            topr = ((UV)ir) >> (UVSIZE * 8 - 2);
++            topl = ((UV)il) >> (UVINTSIZE * 8 - 2);
++            topr = ((UV)ir) >> (UVINTSIZE * 8 - 2);
+ 
+             /* if both are in a range that can't under/overflow, do a
+              * simple integer add: if the top of both numbers
               * are 00  or 11, then it's safe */
              if (!( ((topl+1) | (topr+1)) & 2)) {
                  SP--;
