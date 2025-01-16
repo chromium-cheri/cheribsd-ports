@@ -1,0 +1,897 @@
+diff --git gtests/pk11_gtest/pk11_cbc_unittest.cc gtests/pk11_gtest/pk11_cbc_unittest.cc
+index 58bc614f4..acfd03b0c 100644
+--- gtests/pk11_gtest/pk11_cbc_unittest.cc
++++ gtests/pk11_gtest/pk11_cbc_unittest.cc
+@@ -257,7 +257,11 @@ TEST_F(Pkcs11CbcPadTest, FailEncryptShortParam) {
+   size_t input_len = AES_BLOCK_SIZE;
+ 
+   // CK_NSS_GCM_PARAMS is the largest param struct used across AES modes
++#if defined(__CHERI_PURE_CAPABILITY__)
++  alignas(alignof(max_align_t)) uint8_t param_buf[sizeof(CK_NSS_GCM_PARAMS)];
++#else   // !__CHERI_PURE_CAPABILITY__
+   uint8_t param_buf[sizeof(CK_NSS_GCM_PARAMS)];
++#endif  // !__CHERI_PURE_CAPABILITY__
+   SECItem param = {siBuffer, param_buf, sizeof(param_buf)};
+   SECItem key_item = {siBuffer, const_cast<uint8_t*>(kKeyData), 16};
+ 
+diff --git lib/base/arena.c lib/base/arena.c
+index b8e64643d..203b771d5 100644
+--- lib/base/arena.c
++++ lib/base/arena.c
+@@ -8,6 +8,11 @@
+  * This contains the implementation of NSS's thread-safe arenas.
+  */
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++#include <stdalign.h>
++#include <stddef.h>
++#endif
++
+ #ifndef BASE_H
+ #include "base.h"
+ #endif /* BASE_H */
+@@ -380,7 +385,11 @@ nssArena_Create(void)
+      * useful to us, so I'll just pick 2048.
+      */
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    PL_InitArenaPool(&rv->pool, "NSS", 2048, alignof(max_align_t));
++#else
+     PL_InitArenaPool(&rv->pool, "NSS", 2048, sizeof(double));
++#endif
+ 
+ #ifdef DEBUG
+     {
+diff --git lib/freebl/Makefile lib/freebl/Makefile
+index 9652cecee..2f795fac1 100644
+--- lib/freebl/Makefile
++++ lib/freebl/Makefile
+@@ -136,7 +136,7 @@ endif
+         endif
+     endif
+ endif
+-ifeq ($(CPU_ARCH),aarch64)
++ifeq ($(CPU_ARCH), aarch64)
+     ifdef CC_IS_CLANG
+         DEFINES += -DUSE_HW_AES -DUSE_HW_SHA1 -DUSE_HW_SHA2
+         EXTRA_SRCS += aes-armv8.c gcm-aarch64.c sha1-armv8.c sha256-armv8.c
+@@ -155,6 +155,10 @@ ifeq ($(CPU_ARCH),aarch64)
+         endif
+     endif
+ endif
++ifeq ($(CPU_ARCH),aarch64c)
++    DEFINES += -DUSE_HW_AES -DUSE_HW_SHA1 -DUSE_HW_SHA2
++    EXTRA_SRCS += aes-armv8.c gcm-aarch64.c sha1-armv8.c sha256-armv8.c
++endif
+ ifeq ($(CPU_ARCH),arm)
+ ifndef NSS_DISABLE_ARM32_NEON
+     EXTRA_SRCS += gcm-arm32-neon.c
+@@ -777,6 +781,13 @@ $(OBJDIR)/$(PROG_PREFIX)sha1-armv8$(OBJ_SUFFIX): CFLAGS += -march=armv8-a+crypto
+ $(OBJDIR)/$(PROG_PREFIX)sha256-armv8$(OBJ_SUFFIX): CFLAGS += -march=armv8-a+crypto
+ endif
+ 
++ifeq ($(CPU_ARCH),aarch64c)
++$(OBJDIR)/$(PROG_PREFIX)aes-armv8$(OBJ_SUFFIX): CFLAGS += -march=morello+crypto
++$(OBJDIR)/$(PROG_PREFIX)gcm-aarch64$(OBJ_SUFFIX): CFLAGS += -march=morello+crypto
++$(OBJDIR)/$(PROG_PREFIX)sha1-armv8$(OBJ_SUFFIX): CFLAGS += -march=morello+crypto
++$(OBJDIR)/$(PROG_PREFIX)sha256-armv8$(OBJ_SUFFIX): CFLAGS += -march=morello+crypto
++endif
++
+ ifeq ($(CPU_ARCH),ppc)
+ $(OBJDIR)/$(PROG_PREFIX)sha512$(OBJ_SUFFIX): CFLAGS += -funroll-loops -fpeel-loops
+ ifneq ($(NSS_DISABLE_ALTIVEC),1)
+diff --git lib/freebl/genload.c lib/freebl/genload.c
+index 832deb58c..d6cc777ec 100644
+--- lib/freebl/genload.c
++++ lib/freebl/genload.c
+@@ -102,7 +102,7 @@ loader_LoadLibInReferenceDir(const char* referencePath, const char* name)
+ #endif
+             libSpec.type = PR_LibSpec_Pathname;
+             libSpec.value.pathname = fullName;
+-            dlh = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL);
++            dlh = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL);
+             PORT_Free(fullName);
+         }
+     }
+@@ -156,7 +156,7 @@ loader_LoadLibrary(const char* nameToLoad)
+ #endif
+         libSpec.type = PR_LibSpec_Pathname;
+         libSpec.value.pathname = nameToLoad;
+-        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL);
++        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL);
+     }
+     if (NULL == lib) {
+ #ifdef DEBUG_LOADER
+diff --git lib/freebl/mpi/mpcpucache.c lib/freebl/mpi/mpcpucache.c
+index ddc21ec1c..f7f31fc35 100644
+--- lib/freebl/mpi/mpcpucache.c
++++ lib/freebl/mpi/mpcpucache.c
+@@ -733,7 +733,11 @@ dcbzl(char *array)
+             : "memory");
+ }
+ 
++#if __has_builtin(__builtin_align_down)
++#define PPC_DO_ALIGN(x, y) __builtin_align_down(x, y)
++#else
+ #define PPC_DO_ALIGN(x, y) ((char *)((((long long)(x)) + ((y)-1)) & ~((y)-1)))
++#endif
+ 
+ #define PPC_MAX_LINE_SIZE 256
+ unsigned long
+diff --git lib/freebl/mpi/mpmontg.c lib/freebl/mpi/mpmontg.c
+index 58f5cde2a..7e40a7be7 100644
+--- lib/freebl/mpi/mpmontg.c
++++ lib/freebl/mpi/mpmontg.c
+@@ -818,7 +818,11 @@ weave_to_mpi(mp_int *a,              /* out, result */
+     ptmp = pa1; \
+     pa1 = pa2;  \
+     pa2 = ptmp
++#if __has_builtin(__builtin_align_down)
++#define MP_ALIGN(x, y) __builtin_align_down(x, y)
++#else
+ #define MP_ALIGN(x, y) ((((ptrdiff_t)(x)) + ((y)-1)) & (((ptrdiff_t)0) - (y)))
++#endif
+ 
+ /* Do modular exponentiation using integer multiply code. */
+ mp_err
+diff --git lib/smime/cmsudf.c lib/smime/cmsudf.c
+index 5c8a81e6d..e8e22b71b 100644
+--- lib/smime/cmsudf.c
++++ lib/smime/cmsudf.c
+@@ -142,7 +142,11 @@ nss_cmstype_lookup(SECOidTag type)
+     }
+     PR_Lock(nsscmstypeHashLock);
+     if (nsscmstypeHash) {
++#if defined(__CHERI_PURE_CAPABILITY__)
++        typeInfo = PL_HashTableLookupConst(nsscmstypeHash, (void *)(uintptr_t)type);
++#else   // !__CHERI_PURE_CAPABILITY__
+         typeInfo = PL_HashTableLookupConst(nsscmstypeHash, (void *)type);
++#endif  // !__CHERI_PURE_CAPABILITY__
+     }
+     PR_Unlock(nsscmstypeHashLock);
+     return typeInfo;
+@@ -167,7 +171,11 @@ nss_cmstype_add(SECOidTag type, nsscmstypeInfo *typeinfo)
+         PR_Unlock(nsscmstypeHashLock);
+         return SECFailure;
+     }
++#if defined(__CHERI_PURE_CAPABILITY__)
++    entry = PL_HashTableAdd(nsscmstypeHash, (void *)(uintptr_t)type, typeinfo);
++#else   // !__CHERI_PURE_CAPABILITY__
+     entry = PL_HashTableAdd(nsscmstypeHash, (void *)type, typeinfo);
++#endif  // !__CHERI_PURE_CAPABILITY__
+     PR_Unlock(nsscmstypeHashLock);
+     return entry ? SECSuccess : SECFailure;
+ }
+diff --git lib/softoken/legacydb/lgutil.c lib/softoken/legacydb/lgutil.c
+index d872bf4b3..88b4ff03a 100644
+--- lib/softoken/legacydb/lgutil.c
++++ lib/softoken/legacydb/lgutil.c
+@@ -223,8 +223,13 @@ lg_deleteTokenKeyByHandle(SDB *sdb, CK_OBJECT_HANDLE handle)
+     PRBool rem;
+     PLHashTable *hashTable = lg_GetHashTable(sdb);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    item = (SECItem *)PL_HashTableLookup(hashTable, (void *)(uintptr_t)handle);
++    rem = PL_HashTableRemove(hashTable, (void *)(uintptr_t)handle);
++#else   // !__CHERI_PURE_CAPABILITY__
+     item = (SECItem *)PL_HashTableLookup(hashTable, (void *)handle);
+     rem = PL_HashTableRemove(hashTable, (void *)handle);
++#endif  // !__CHERI_PURE_CAPABILITY__
+     if (rem && item) {
+         SECITEM_FreeItem(item, PR_TRUE);
+     }
+@@ -243,7 +248,11 @@ lg_addTokenKeyByHandle(SDB *sdb, CK_OBJECT_HANDLE handle, SECItem *key)
+     if (item == NULL) {
+         return SECFailure;
+     }
++#if defined(__CHERI_PURE_CAPABILITY__)
++    entry = PL_HashTableAdd(hashTable, (void *)(uintptr_t)handle, item);
++#else   // !__CHERI_PURE_CAPABILITY__
+     entry = PL_HashTableAdd(hashTable, (void *)handle, item);
++#endif  // !__CHERI_PURE_CAPABILITY__
+     if (entry == NULL) {
+         SECITEM_FreeItem(item, PR_TRUE);
+         return SECFailure;
+@@ -256,7 +265,11 @@ const SECItem *
+ lg_lookupTokenKeyByHandle(SDB *sdb, CK_OBJECT_HANDLE handle)
+ {
+     PLHashTable *hashTable = lg_GetHashTable(sdb);
++#if defined(__CHERI_PURE_CAPABILITY__)
++    return (const SECItem *)PL_HashTableLookup(hashTable, (void *)(uintptr_t)handle);
++#else   // !__CHERI_PURE_CAPABILITY__
+     return (const SECItem *)PL_HashTableLookup(hashTable, (void *)handle);
++#endif  // !__CHERI_PURE_CAPABILITY__
+ }
+ 
+ static PRIntn
+diff --git lib/softoken/lgglue.c lib/softoken/lgglue.c
+index 461e9a3cd..3668516e0 100644
+--- lib/softoken/lgglue.c
++++ lib/softoken/lgglue.c
+@@ -113,7 +113,7 @@ sftkdb_LoadFromPath(const char *path, const char *libname)
+ 
+     libSpec.type = PR_LibSpec_Pathname;
+     libSpec.value.pathname = fullPathName;
+-    lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL);
++    lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL);
+     PORT_Free(fullPathName);
+     return lib;
+ }
+@@ -155,7 +155,7 @@ done:
+         PRLibSpec libSpec;
+         libSpec.type = PR_LibSpec_Pathname;
+         libSpec.value.pathname = libname;
+-        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL);
++        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL);
+     }
+ 
+     return lib;
+diff --git lib/softoken/pkcs11c.c lib/softoken/pkcs11c.c
+index 757d1027b..d95858020 100644
+--- lib/softoken/pkcs11c.c
++++ lib/softoken/pkcs11c.c
+@@ -39,6 +39,10 @@
+ #include "prprf.h"
+ #include "prenv.h"
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++#include <stdalign.h>
++#endif   // __CHERI_PURE_CAPABILITY__
++
+ #define __PASTE(x, y) x##y
+ #define BAD_PARAM_CAST(pMech, typeSize) (!pMech->pParameter || pMech->ulParameterLen < typeSize)
+ /*
+@@ -8776,7 +8780,12 @@ NSC_GetOperationState(CK_SESSION_HANDLE hSession,
+         return CKR_STATE_UNSAVEABLE;
+     }
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    *pulOperationStateLen = context->cipherInfoLen +
++       __builtin_align_up(sizeof(CK_MECHANISM_TYPE) + sizeof(SFTKContextType), alignof(max_align_t));
++#else   // !__CHERI_PURE_CAPABILITY__
+     *pulOperationStateLen = context->cipherInfoLen + sizeof(CK_MECHANISM_TYPE) + sizeof(SFTKContextType);
++#endif  // !__CHERI_PURE_CAPABILITY__
+     if (pOperationState == NULL) {
+         sftk_FreeSession(session);
+         return CKR_OK;
+@@ -8790,6 +8799,12 @@ NSC_GetOperationState(CK_SESSION_HANDLE hSession,
+     PORT_Memcpy(pOperationState, &context->currentMech,
+                 sizeof(CK_MECHANISM_TYPE));
+     pOperationState += sizeof(CK_MECHANISM_TYPE);
++#if defined(__CHERI_PURE_CAPABILITY__)
++    /* pOperationState must be aligned to alignof(max_align_t) to ensure that
++     * capabilities and sentry values within the cipherInfo are preserved.
++     */
++    pOperationState = __builtin_align_up(pOperationState, alignof(max_align_t));
++#endif   // __CHERI_PURE_CAPABILITY__
+     PORT_Memcpy(pOperationState, context->cipherInfo, context->cipherInfoLen);
+     sftk_FreeSession(session);
+     return CKR_OK;
+@@ -8833,7 +8848,16 @@ NSC_SetOperationState(CK_SESSION_HANDLE hSession,
+         /* get the mechanism structure */
+         PORT_Memcpy(&mech.mechanism, pOperationState, sizeof(CK_MECHANISM_TYPE));
+         pOperationState += sizeof(CK_MECHANISM_TYPE);
++#if defined(__CHERI_PURE_CAPABILITY__)
++        /* pOperationState must be aligned to alignof(max_align_t) to ensure that
++         * capabilities and sentry values within the cipherInfo are preserved.
++         */
++        pOperationState = __builtin_align_up(pOperationState, alignof(max_align_t));
++        sftk_Decrement(ulOperationStateLen, sizeof(CK_MECHANISM_TYPE));
++        ulOperationStateLen = __builtin_align_up(ulOperationStateLen, alignof(max_align_t));
++#else   // !__CHERI_PURE_CAPABILITY__
+         sftk_Decrement(ulOperationStateLen, sizeof(CK_MECHANISM_TYPE));
++#endif  // !__CHERI_PURE_CAPABILITY__
+         /* should be filled in... but not necessary for hash */
+         mech.pParameter = NULL;
+         mech.ulParameterLen = 0;
+diff --git lib/ssl/ssl3con.c lib/ssl/ssl3con.c
+index 84246954a..69f4345c7 100644
+--- lib/ssl/ssl3con.c
++++ lib/ssl/ssl3con.c
+@@ -10622,14 +10622,22 @@ ssl3_GenerateRSAPMS(sslSocket *ss, ssl3CipherSpec *spec,
+ static void
+ ssl3_CSwapPK11SymKey(PK11SymKey **x, PK11SymKey **y, PRBool c)
+ {
++#if defined(__CHERI_PURE_CAPABILITY__)
++    ptraddr_t mask = (ptraddr_t)c;
++#else   // !__CHERI_PURE_CAPABILITY__
+     uintptr_t mask = (uintptr_t)c;
++#endif  // !__CHERI_PURE_CAPABILITY__
+     unsigned int i;
+     for (i = 1; i < sizeof(uintptr_t) * 8; i <<= 1) {
+         mask |= mask << i;
+     }
+     uintptr_t x_ptr = (uintptr_t)*x;
+     uintptr_t y_ptr = (uintptr_t)*y;
++#if defined(__CHERI_PURE_CAPABILITY__)
++    ptraddr_t tmp = ((ptraddr_t)x_ptr ^ (ptraddr_t)y_ptr) & mask;
++#else   // !__CHERI_PURE_CAPABILITY__
+     uintptr_t tmp = (x_ptr ^ y_ptr) & mask;
++#endif  // !__CHERI_PURE_CAPABILITY__
+     x_ptr = x_ptr ^ tmp;
+     y_ptr = y_ptr ^ tmp;
+     *x = (PK11SymKey *)x_ptr;
+diff --git lib/ssl/sslsnce.c lib/ssl/sslsnce.c
+index 49f041c97..555cac2d7 100644
+--- lib/ssl/sslsnce.c
++++ lib/ssl/sslsnce.c
+@@ -242,7 +242,11 @@ static PRBool isMultiProcess = PR_FALSE;
+ #endif
+ 
+ #define SID_HOWMANY(val, size) (((val) + ((size)-1)) / (size))
++#if __has_builtin(__builtin_align_up)
++#define SID_ROUNDUP(val, size) __builtin_align_up(val, size)
++#else
+ #define SID_ROUNDUP(val, size) ((size)*SID_HOWMANY((val), (size)))
++#endif
+ 
+ static sslPID myPid;
+ static PRUint32 ssl_max_sid_cache_locks = MAX_SID_CACHE_LOCKS;
+@@ -967,25 +971,45 @@ InitCache(cacheDesc *cache, int maxCacheEntries, int maxCertCacheEntries,
+ 
+     /* compute size of shared memory, and offsets of all pointers */
+     ptr = 0;
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->cacheMem = NULL;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->cacheMem = (char *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr += SID_ROUNDUP(sizeof(cacheDesc), SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->sidCacheLocks = (sidCacheLock *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->sidCacheLocks = (sidCacheLock *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     cache->keyCacheLock = cache->sidCacheLocks + cache->numSIDCacheLocks;
+     cache->certCacheLock = cache->keyCacheLock + 1;
+     cache->srvNameCacheLock = cache->certCacheLock + 1;
+     ptr = (ptrdiff_t)(cache->srvNameCacheLock + 1);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->sidCacheSets = (sidCacheSet *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->sidCacheSets = (sidCacheSet *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->sidCacheSets + cache->numSIDCacheSets);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->sidCacheData = (sidCacheEntry *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->sidCacheData = (sidCacheEntry *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->sidCacheData + cache->numSIDCacheEntries);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->certCacheData = (certCacheEntry *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->certCacheData = (certCacheEntry *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     cache->sidCacheSize =
+         (char *)cache->certCacheData - (char *)cache->sidCacheData;
+ 
+@@ -998,7 +1022,11 @@ InitCache(cacheDesc *cache, int maxCacheEntries, int maxCertCacheEntries,
+     ptr = (ptrdiff_t)(cache->certCacheData + cache->numCertCacheEntries);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->keyCacheData = (SSLWrappedSymWrappingKey *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->keyCacheData = (SSLWrappedSymWrappingKey *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     cache->certCacheSize =
+         (char *)cache->keyCacheData - (char *)cache->certCacheData;
+ 
+@@ -1006,26 +1034,50 @@ InitCache(cacheDesc *cache, int maxCacheEntries, int maxCertCacheEntries,
+     ptr = (ptrdiff_t)(cache->keyCacheData + cache->numKeyCacheEntries);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->keyCacheSize = (char *)(uintptr_t)ptr - (char *)cache->keyCacheData;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->keyCacheSize = (char *)ptr - (char *)cache->keyCacheData;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->ticketKeyNameSuffix = (PRUint8 *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->ticketKeyNameSuffix = (PRUint8 *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->ticketKeyNameSuffix +
+                       SELF_ENCRYPT_KEY_VAR_NAME_LEN);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->ticketEncKey = (encKeyCacheEntry *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->ticketEncKey = (encKeyCacheEntry *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->ticketEncKey + 1);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->ticketMacKey = (encKeyCacheEntry *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->ticketMacKey = (encKeyCacheEntry *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->ticketMacKey + 1);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->ticketKeysValid = (PRUint32 *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->ticketKeysValid = (PRUint32 *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     ptr = (ptrdiff_t)(cache->ticketKeysValid + 1);
+     ptr = SID_ROUNDUP(ptr, SID_ALIGNMENT);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++    cache->srvNameCacheData = (srvNameCacheEntry *)(uintptr_t)ptr;
++#else   // !__CHERI_PURE_CAPABIULITY__
+     cache->srvNameCacheData = (srvNameCacheEntry *)ptr;
++#endif  // !__CHERI_PURE_CAPABIULITY__
+     cache->srvNameCacheSize =
+         cache->numSrvNameCacheEntries * sizeof(srvNameCacheEntry);
+     ptr = (ptrdiff_t)(cache->srvNameCacheData + cache->numSrvNameCacheEntries);
+diff --git lib/util/secload.c lib/util/secload.c
+index 1cebae4e2..4ba5c540e 100644
+--- lib/util/secload.c
++++ lib/util/secload.c
+@@ -82,7 +82,7 @@ loader_LoadLibInReferenceDir(const char* referencePath, const char* name)
+ #endif
+             libSpec.type = PR_LibSpec_Pathname;
+             libSpec.value.pathname = fullName;
+-            dlh = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL
++            dlh = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL
+ #ifdef PR_LD_ALT_SEARCH_PATH
+                                                        /* allow library's dependencies to be found in the same directory
+                                                         * on Windows even if PATH is not set. Requires NSPR 4.8.1 . */
+@@ -171,7 +171,7 @@ PORT_LoadLibraryFromOrigin(const char* existingShLibName,
+ #endif
+         libSpec.type = PR_LibSpec_Pathname;
+         libSpec.value.pathname = newShLibName;
+-        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_NOW | PR_LD_LOCAL);
++        lib = PR_LoadLibraryWithFlags(libSpec, PR_LD_LAZY | PR_LD_LOCAL);
+     }
+     if (NULL == lib) {
+ #ifdef DEBUG_LOADER
+diff --git lib/util/secport.c lib/util/secport.c
+index fb5223d64..3334cc233 100644
+--- lib/util/secport.c
++++ lib/util/secport.c
+@@ -37,6 +37,11 @@
+ #include "wtypes.h"
+ #endif
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++#include <stdalign.h>
++#include <stddef.h>
++#endif
++
+ #define SET_ERROR_CODE /* place holder for code to set PR error code. */
+ 
+ #ifdef THREADMARK
+@@ -276,7 +281,11 @@ PORT_NewArena(unsigned long chunksize)
+         PORT_Free(pool);
+         return NULL;
+     }
++#if defined(__CHERI_PURE_CAPABILITY__)
++    PL_InitArenaPool(&pool->arena, "security", chunksize, alignof(max_align_t));
++#else
+     PL_InitArenaPool(&pool->arena, "security", chunksize, sizeof(double));
++#endif
+     return (&pool->arena);
+ }
+ 
+@@ -284,7 +293,11 @@ void
+ PORT_InitCheapArena(PORTCheapArenaPool *pool, unsigned long chunksize)
+ {
+     pool->magic = CHEAP_ARENAPOOL_MAGIC;
++#if defined(__CHERI_PURE_CAPABILITY__)
++    PL_InitArenaPool(&pool->arena, "security", chunksize, alignof(max_align_t));
++#else
+     PL_InitArenaPool(&pool->arena, "security", chunksize, sizeof(double));
++#endif
+ }
+ 
+ void *
+diff --git tests/all.sh tests/all.sh
+index 60cd99fdd..9ce54cc30 100755
+--- tests/all.sh
++++ tests/all.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/bogo/bogo.sh tests/bogo/bogo.sh
+index e5b12c2d5..456c7dc5f 100755
+--- tests/bogo/bogo.sh
++++ tests/bogo/bogo.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+@@ -13,7 +13,7 @@
+ ########################################################################
+ 
+ # Currently used BorringSSL version
+-BOGO_VERSION=48f794765b0df3310649e6a6c6f71c5cd845f445
++BOGO_VERIONS=f7825d609ae29c54b50b34066e007cf2849a971e
+ 
+ bogo_init()
+ {
+@@ -27,7 +27,7 @@ bogo_init()
+   cd "${HOSTDIR}/bogo"
+   BORING=${BORING:=boringssl}
+   if [ ! -d "$BORING" ]; then
+-    git clone -q https://boringssl.googlesource.com/boringssl "$BORING"
++    git clone -q https://github.com/chromium-cheri/boringssl "$BORING"
+     git -C "$BORING" checkout -q $BOGO_VERSION
+   fi
+ 
+diff --git tests/cert/cert.sh tests/cert/cert.sh
+index d7ec101fa..e0ffe8889 100755
+--- tests/cert/cert.sh
++++ tests/cert/cert.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/chains/chains.sh tests/chains/chains.sh
+index e13ae52f9..a9ff33694 100755
+--- tests/chains/chains.sh
++++ tests/chains/chains.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/cipher/cipher.sh tests/cipher/cipher.sh
+index 4ef0724b2..808d21837 100755
+--- tests/cipher/cipher.sh
++++ tests/cipher/cipher.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/cmdtests/cmdtests.sh tests/cmdtests/cmdtests.sh
+old mode 100644
+new mode 100755
+index cc925b213..a12a7497c
+--- tests/cmdtests/cmdtests.sh
++++ tests/cmdtests/cmdtests.sh
+@@ -1,4 +1,4 @@
+-#! /bin/sh  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/common/init.sh tests/common/init.sh
+index 561c72544..3a79a69a5 100644
+--- tests/common/init.sh
++++ tests/common/init.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/crmf/crmf.sh tests/crmf/crmf.sh
+old mode 100644
+new mode 100755
+index 4e1f35782..f7fa41821
+--- tests/crmf/crmf.sh
++++ tests/crmf/crmf.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/dbtests/dbtests.sh tests/dbtests/dbtests.sh
+index c82ea85ca..e9097ff2d 100755
+--- tests/dbtests/dbtests.sh
++++ tests/dbtests/dbtests.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+@@ -359,7 +359,7 @@ dbtest_main()
+       mkdir -p ${BIG_DIR}
+       cp ${QADIR}/dbtests/bigdb/* ${BIG_DIR}/
+       echo "time certutil -K -d ${BIG_DIR} -f ${R_PWFILE}"
+-      dtime=$(time -p (certutil -K -d ${BIG_DIR} -f ${R_PWFILE}) 2>&1 1>/dev/null)
++      dtime=$(time -p $(certutil -K -d ${BIG_DIR} -f ${R_PWFILE}) 2>&1 1>/dev/null)
+       echo "------------- time ----------------------"
+       echo $dtime
+       # now parse the real time to make sure it's subsecond
+diff --git tests/dbupgrade/dbupgrade.sh tests/dbupgrade/dbupgrade.sh
+index 0302e6143..a8a55210c 100755
+--- tests/dbupgrade/dbupgrade.sh
++++ tests/dbupgrade/dbupgrade.sh
+@@ -1,4 +1,4 @@
+-#!/bin/sh
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+@@ -25,17 +25,17 @@
+ dbupgrade_init()
+ {
+ 	if [ -z "${INIT_SOURCED}" -o "${INIT_SOURCED}" != "TRUE" ]; then 
+-		cd ${QADIR}/common
++		cd ../common
+ 		. ./init.sh
+ 	fi
+ 	
+ 	if [ ! -r "${CERT_LOG_FILE}" ]; then  # we need certificates here
+-		cd ${QADIR}/cert 
++		cd ../cert
+ 		. ./cert.sh
+ 	fi
+ 
+ 	if [ ! -d ${HOSTDIR}/SDR ]; then  # we also need sdr as well
+-		cd ${QADIR}/sdr
++		cd ../sdr
+ 		. ./sdr.sh
+ 	fi
+ 	
+diff --git tests/dummy/dummy.sh tests/dummy/dummy.sh
+old mode 100644
+new mode 100755
+index 27d3c9cf4..a67ccf538
+--- tests/dummy/dummy.sh
++++ tests/dummy/dummy.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/ec/ec.sh tests/ec/ec.sh
+index 9869b6590..ab8a51161 100755
+--- tests/ec/ec.sh
++++ tests/ec/ec.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/ec/ectest.sh tests/ec/ectest.sh
+index e10760565..e1aae9258 100755
+--- tests/ec/ectest.sh
++++ tests/ec/ectest.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/fips/fips.sh tests/fips/fips.sh
+index 364930494..df44c098b 100755
+--- tests/fips/fips.sh
++++ tests/fips/fips.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/gtests/gtests.sh tests/gtests/gtests.sh
+index 4e04b6100..5733473dd 100755
+--- tests/gtests/gtests.sh
++++ tests/gtests/gtests.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/interop/interop.sh tests/interop/interop.sh
+index 8481e99af..6e5857a1b 100755
+--- tests/interop/interop.sh
++++ tests/interop/interop.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/libpkix/libpkix.sh tests/libpkix/libpkix.sh
+index 25d38ccbe..79751ab69 100755
+--- tests/libpkix/libpkix.sh
++++ tests/libpkix/libpkix.sh
+@@ -1,4 +1,4 @@
+-#! /bin/sh
++#! /usr/bin/env bash
+ # 
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/lowhash/lowhash.sh tests/lowhash/lowhash.sh
+index 6de255be4..cc91f7068 100755
+--- tests/lowhash/lowhash.sh
++++ tests/lowhash/lowhash.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/memleak/memleak.sh tests/memleak/memleak.sh
+index 45e432bee..4fb0e0647 100755
+--- tests/memleak/memleak.sh
++++ tests/memleak/memleak.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/merge/merge.sh tests/merge/merge.sh
+index d17a8c4ef..2d8423b51 100755
+--- tests/merge/merge.sh
++++ tests/merge/merge.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/mpi/mpi.sh tests/mpi/mpi.sh
+old mode 100644
+new mode 100755
+index 5cda51615..0cbd33177
+--- tests/mpi/mpi.sh
++++ tests/mpi/mpi.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/multinit/multinit.sh tests/multinit/multinit.sh
+index 6ec605f0e..dc18fdb55 100755
+--- tests/multinit/multinit.sh
++++ tests/multinit/multinit.sh
+@@ -1,4 +1,4 @@
+-#! /bin/sh  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/ocsp/ocsp.sh tests/ocsp/ocsp.sh
+old mode 100644
+new mode 100755
+index 246e6e3d4..6c523b7f2
+--- tests/ocsp/ocsp.sh
++++ tests/ocsp/ocsp.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/perf/perf.sh tests/perf/perf.sh
+index b398a0e57..b689e1a02 100755
+--- tests/perf/perf.sh
++++ tests/perf/perf.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/pkits/pkits.sh tests/pkits/pkits.sh
+index e79fdd382..1b67b1ea9 100755
+--- tests/pkits/pkits.sh
++++ tests/pkits/pkits.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/policy/policy.sh tests/policy/policy.sh
+index 51f7cc901..bd3247585 100755
+--- tests/policy/policy.sh
++++ tests/policy/policy.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+@@ -63,6 +63,7 @@ NSS=flags=policyOnly,moduleDB
+     echo "config=\"${policy}\"" >> "$POLICY_FILE"
+     echo "" >> "$POLICY_FILE"
+ 
++    echo "nss-policy-check -f identifier -f value "$POLICY_FILE" >${TMP}/$HOST.tmp.$$ 2>&1"
+     nss-policy-check -f identifier -f value "$POLICY_FILE" >${TMP}/$HOST.tmp.$$ 2>&1
+     ret=$?
+     cat ${TMP}/$HOST.tmp.$$
+diff --git tests/sdr/sdr.sh tests/sdr/sdr.sh
+index 7321ebdbf..315c74b8f 100755
+--- tests/sdr/sdr.sh
++++ tests/sdr/sdr.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+@@ -124,7 +124,7 @@ sdr_main()
+     cat ${ASCII_COMBINED} >> ${COMBINED_300}
+   done
+   echo "time pwdecrypt -i ${COMBINED_300} -o ${DECODED} -l ${LOG} -d ${PROFILE}  -f ${R_PWFILE}"
+-  dtime=$(time -p (pwdecrypt -i ${COMBINED_300} -o ${DECODED} -l ${LOG} -d ${PROFILE}  -f ${R_PWFILE}) 2>&1 1>/dev/null)
++  dtime=$(time -p $(pwdecrypt -i ${COMBINED_300} -o ${DECODED} -l ${LOG} -d ${PROFILE}  -f ${R_PWFILE}) 2>&1 1>/dev/null)
+   echo "------------- result ----------------------"
+   cat ${DECODED}
+   wc -c ${DECODED}
+diff --git tests/smime/smime.sh tests/smime/smime.sh
+index e7e05aa2a..892dc81b8 100755
+--- tests/smime/smime.sh
++++ tests/smime/smime.sh
+@@ -1,4 +1,4 @@
+-#! /bin/sh  
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/ssl/ssl.sh tests/ssl/ssl.sh
+index 0fa24a2c6..4893cedf4 100755
+--- tests/ssl/ssl.sh
++++ tests/ssl/ssl.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/ssl_gtests/ssl_gtests.sh tests/ssl_gtests/ssl_gtests.sh
+index d2e8c7a4f..d768d6aae 100755
+--- tests/ssl_gtests/ssl_gtests.sh
++++ tests/ssl_gtests/ssl_gtests.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/tlsfuzzer/tlsfuzzer.sh tests/tlsfuzzer/tlsfuzzer.sh
+old mode 100644
+new mode 100755
+index f2d03bda9..6e9fcd42d
+--- tests/tlsfuzzer/tlsfuzzer.sh
++++ tests/tlsfuzzer/tlsfuzzer.sh
+@@ -1,4 +1,4 @@
+-#!/bin/bash
++#!/usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
+diff --git tests/tools/tools.sh tests/tools/tools.sh
+index 15a41e39c..bb4cbf876 100755
+--- tests/tools/tools.sh
++++ tests/tools/tools.sh
+@@ -1,4 +1,4 @@
+-#! /bin/bash
++#! /usr/bin/env bash
+ #
+ # This Source Code Form is subject to the terms of the Mozilla Public
+ # License, v. 2.0. If a copy of the MPL was not distributed with this
